@@ -6,9 +6,10 @@ import yfinance as yf
 class FundamentalAnalysis:
     """Pull fundamental data from Yahoo Finance and score the stock."""
 
-    def __init__(self, ticker: yf.Ticker):
+    def __init__(self, ticker: yf.Ticker, currency_sym: str = "$"):
         self.ticker = ticker
         self.info = ticker.info
+        self.currency_sym = currency_sym
         self.metrics: dict = {}
         self.signals: dict = {}
 
@@ -129,9 +130,9 @@ class FundamentalAnalysis:
         self.metrics["Debt/Equity"] = _fmt(de)
         self.metrics["Current Ratio"] = _fmt(current)
         self.metrics["Quick Ratio"] = _fmt(quick)
-        self.metrics["Free Cash Flow"] = _human_number(fcf)
-        self.metrics["Total Cash"] = _human_number(total_cash)
-        self.metrics["Total Debt"] = _human_number(total_debt)
+        self.metrics["Free Cash Flow"] = _human_number(fcf, self.currency_sym)
+        self.metrics["Total Cash"] = _human_number(total_cash, self.currency_sym)
+        self.metrics["Total Debt"] = _human_number(total_debt, self.currency_sym)
 
         score = 0
         reasons = []
@@ -185,12 +186,13 @@ class FundamentalAnalysis:
         if target and current_price:
             upside = (target - current_price) / current_price
             self.metrics["Upside to Target"] = f"{upside:.1%}"
+            sym = self.currency_sym
             if upside > 0.15:
-                self.signals["Analyst Target"] = ("Bullish", f"{upside:.1%} upside to ${target}")
+                self.signals["Analyst Target"] = ("Bullish", f"{upside:.1%} upside to {sym}{target}")
             elif upside < -0.10:
-                self.signals["Analyst Target"] = ("Bearish", f"{upside:.1%} downside to ${target}")
+                self.signals["Analyst Target"] = ("Bearish", f"{upside:.1%} downside to {sym}{target}")
             else:
-                self.signals["Analyst Target"] = ("Neutral", f"{upside:.1%} to target ${target}")
+                self.signals["Analyst Target"] = ("Neutral", f"{upside:.1%} to target {sym}{target}")
 
     # -- Aggregation --------------------------------------------------------
 
@@ -226,15 +228,16 @@ def _pct(val):
     return f"{val:.2%}"
 
 
-def _human_number(val):
+def _human_number(val, currency_sym="$"):
     if val is None:
         return "N/A"
     abs_val = abs(val)
     sign = "-" if val < 0 else ""
+    s = currency_sym
     if abs_val >= 1_000_000_000_000:
-        return f"{sign}${abs_val / 1_000_000_000_000:.2f}T"
+        return f"{sign}{s}{abs_val / 1_000_000_000_000:.2f}T"
     if abs_val >= 1_000_000_000:
-        return f"{sign}${abs_val / 1_000_000_000:.2f}B"
+        return f"{sign}{s}{abs_val / 1_000_000_000:.2f}B"
     if abs_val >= 1_000_000:
-        return f"{sign}${abs_val / 1_000_000:.2f}M"
-    return f"{sign}${abs_val:,.0f}"
+        return f"{sign}{s}{abs_val / 1_000_000:.2f}M"
+    return f"{sign}{s}{abs_val:,.0f}"

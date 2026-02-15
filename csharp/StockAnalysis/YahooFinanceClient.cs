@@ -84,6 +84,7 @@ public class YahooFinanceClient
         dict["currentPrice"] = Raw(fin?["currentPrice"]);
         dict["recommendationKey"] = fin?["recommendationKey"]?.Value<string>();
         dict["numberOfAnalystOpinions"] = Raw(fin?["numberOfAnalystOpinions"]);
+        dict["currency"] = fin?["financialCurrency"]?.Value<string>();
 
         return dict;
     }

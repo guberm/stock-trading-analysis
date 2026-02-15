@@ -6,10 +6,15 @@ namespace StockAnalysis;
 public class FundamentalAnalysis
 {
     private readonly Dictionary<string, object?> _info;
+    private readonly string _currencySym;
     public Dictionary<string, object> Metrics { get; } = new();
     public Dictionary<string, Signal> Signals { get; } = new();
 
-    public FundamentalAnalysis(Dictionary<string, object?> info) => _info = info;
+    public FundamentalAnalysis(Dictionary<string, object?> info, string currencySym = "$")
+    {
+        _info = info;
+        _currencySym = currencySym;
+    }
 
     public AnalysisResult ComputeAll()
     {
@@ -137,9 +142,9 @@ public class FundamentalAnalysis
             double upside = (target.Value - currentPrice.Value) / currentPrice.Value;
             Metrics["Upside to Target"] = $"{upside:P1}";
 
-            Signals["Analyst Target"] = upside > 0.15 ? new Signal("Bullish", $"{upside:P1} upside to ${target:F2}")
-                : upside < -0.10 ? new Signal("Bearish", $"{upside:P1} downside to ${target:F2}")
-                : new Signal("Neutral", $"{upside:P1} to target ${target:F2}");
+            Signals["Analyst Target"] = upside > 0.15 ? new Signal("Bullish", $"{upside:P1} upside to {_currencySym}{target:F2}")
+                : upside < -0.10 ? new Signal("Bearish", $"{upside:P1} downside to {_currencySym}{target:F2}")
+                : new Signal("Neutral", $"{upside:P1} to target {_currencySym}{target:F2}");
         }
     }
 
@@ -171,14 +176,15 @@ public class FundamentalAnalysis
     private static object Fmt(double? val) => val.HasValue ? Math.Round(val.Value, 2) : (object)"N/A";
     private static string Pct(double? val) => val.HasValue ? $"{val:P2}" : "N/A";
 
-    private static string HumanNumber(double? val)
+    private string HumanNumber(double? val)
     {
         if (!val.HasValue) return "N/A";
         double abs = Math.Abs(val.Value);
         string sign = val < 0 ? "-" : "";
-        if (abs >= 1_000_000_000_000) return $"{sign}${abs / 1_000_000_000_000:F2}T";
-        if (abs >= 1_000_000_000) return $"{sign}${abs / 1_000_000_000:F2}B";
-        if (abs >= 1_000_000) return $"{sign}${abs / 1_000_000:F2}M";
-        return $"{sign}${abs:N0}";
+        string s = _currencySym;
+        if (abs >= 1_000_000_000_000) return $"{sign}{s}{abs / 1_000_000_000_000:F2}T";
+        if (abs >= 1_000_000_000) return $"{sign}{s}{abs / 1_000_000_000:F2}B";
+        if (abs >= 1_000_000) return $"{sign}{s}{abs / 1_000_000:F2}M";
+        return $"{sign}{s}{abs:N0}";
     }
 }

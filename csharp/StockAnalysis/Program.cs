@@ -1,31 +1,76 @@
 using StockAnalysis;
+using static StockAnalysis.ExchangeRegistry;
 
 // ── Parse arguments ──────────────────────────────────────────────────────────
-string symbol;
+string? rawTicker = null;
 string period = "1y";
+string? exchangeCode = null;
+bool listExchanges = false;
+bool useLlm = false;
+string? llmModel = null;
 
-if (args.Length < 1)
-{
-    Console.WriteLine("Usage: StockAnalysis <TICKER> [--period 1y]");
-    Console.WriteLine("  e.g. StockAnalysis MSFT");
-    Console.WriteLine("  e.g. StockAnalysis NYSE:MSFT --period 6mo");
-    return;
-}
-
-symbol = args[0].Contains(':') ? args[0].Split(':').Last().Trim().ToUpper() : args[0].Trim().ToUpper();
-
-for (int i = 1; i < args.Length; i++)
+for (int i = 0; i < args.Length; i++)
 {
     if (args[i] == "--period" && i + 1 < args.Length)
         period = args[++i];
+    else if (args[i] is "--exchange" or "-e" && i + 1 < args.Length)
+        exchangeCode = args[++i];
+    else if (args[i] == "--list-exchanges")
+        listExchanges = true;
+    else if (args[i] == "--llm")
+        useLlm = true;
+    else if (args[i] == "--model" && i + 1 < args.Length)
+        llmModel = args[++i];
+    else if (rawTicker == null)
+        rawTicker = args[i];
 }
+
+if (listExchanges)
+{
+    Console.WriteLine(ExchangeRegistry.ListExchanges());
+    return;
+}
+
+if (rawTicker == null)
+{
+    Console.WriteLine("Usage: StockAnalysis <TICKER> [--exchange TLV] [--period 1y] [--llm] [--model MODEL]");
+    Console.WriteLine("       StockAnalysis --list-exchanges");
+    Console.WriteLine();
+    Console.WriteLine("Examples:");
+    Console.WriteLine("  StockAnalysis MSFT");
+    Console.WriteLine("  StockAnalysis TEVA.TA");
+    Console.WriteLine("  StockAnalysis TEVA --exchange TLV");
+    Console.WriteLine("  StockAnalysis 7203 --exchange TSE");
+    Console.WriteLine("  StockAnalysis AAPL --llm");
+    Console.WriteLine("  StockAnalysis AAPL --llm --model claude-sonnet-4-5-20250929");
+    return;
+}
+
+TickerInfo tickerInfo;
+try
+{
+    tickerInfo = ExchangeRegistry.ResolveTicker(rawTicker, exchangeCode);
+}
+catch (ArgumentException ex)
+{
+    Console.ForegroundColor = ConsoleColor.Red;
+    Console.WriteLine($"Error: {ex.Message}");
+    Console.ResetColor();
+    return;
+}
+
+string symbol = tickerInfo.YahooSymbol;
+string baseTicker = tickerInfo.BaseTicker;
+string currencySym = tickerInfo.Exchange?.CurrencySymbol ?? "$";
+string currencyCode = tickerInfo.Exchange?.Currency ?? "USD";
+string exchangeLabel = tickerInfo.Exchange != null ? $" ({tickerInfo.Exchange.Name})" : "";
 
 var sep = new string('=', 72);
 var thinSep = new string('-', 72);
 
 Console.WriteLine();
 Console.WriteLine("Stock Trading Decision System");
-Console.WriteLine($"Analyzing: {symbol}");
+Console.WriteLine($"Analyzing: {symbol}{exchangeLabel}");
 Console.WriteLine(sep);
 
 // ── Fetch data ───────────────────────────────────────────────────────────────
@@ -55,11 +100,15 @@ if (history.Count == 0)
     return;
 }
 
+// Use Yahoo Finance's reported currency as fallback
+if (fundamentals.GetValueOrDefault("currency") is string yfCurrency && !string.IsNullOrEmpty(yfCurrency))
+    currencyCode = yfCurrency;
+
 string companyName = fundamentals.GetValueOrDefault("shortName") as string ?? symbol;
 double currentPrice = history[^1].Close;
 
 Console.WriteLine($"  Company : {companyName}");
-Console.WriteLine($"  Price   : ${currentPrice:F2}");
+Console.WriteLine($"  Price   : {currencySym}{currentPrice:F2} {currencyCode}");
 Console.WriteLine($"  Period  : {period} ({history.Count} trading days)");
 
 // ── Technical Analysis ───────────────────────────────────────────────────────
@@ -75,7 +124,7 @@ PrintOverall(taResult.Signals, "Technical");
 
 // ── Fundamental Analysis ─────────────────────────────────────────────────────
 PrintHeader("FUNDAMENTAL ANALYSIS");
-var fa = new FundamentalAnalysis(fundamentals);
+var fa = new FundamentalAnalysis(fundamentals, currencySym);
 var faResult = fa.ComputeAll();
 
 Console.WriteLine("\n  Metrics:");
@@ -86,7 +135,7 @@ PrintOverall(faResult.Signals, "Fundamental");
 
 // ── News Sentiment ───────────────────────────────────────────────────────────
 PrintHeader("NEWS SENTIMENT ANALYSIS");
-var news = new NewsAnalysis(symbol);
+var news = new NewsAnalysis(baseTicker);
 var newsResult = await news.ComputeAllAsync();
 
 Console.WriteLine("\n  Metrics:");
@@ -137,6 +186,35 @@ Console.ForegroundColor = ConsoleColor.Yellow;
 Console.WriteLine("\n  Disclaimer: This is for educational purposes only. Not financial advice.");
 Console.ResetColor();
 Console.WriteLine();
+
+// ── LLM Analysis (optional) ─────────────────────────────────────────────────
+if (useLlm || llmModel != null)
+{
+    PrintHeader("LLM ANALYSIS");
+    Console.WriteLine("\n  Querying LLM...");
+
+    try
+    {
+        var llmResult = await LlmAnalysis.RunAsync(
+            taResult, faResult, newsResult, decision,
+            symbol, companyName, currencyCode, llmModel);
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"\n  Model: {llmResult.Model} ({llmResult.Provider})");
+        Console.ResetColor();
+        Console.WriteLine(thinSep);
+        foreach (var line in llmResult.Response.Split('\n'))
+            Console.WriteLine($"  {line}");
+        Console.WriteLine();
+        Console.WriteLine(thinSep);
+    }
+    catch (Exception ex)
+    {
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine($"\n  LLM analysis failed: {ex.Message}");
+        Console.ResetColor();
+    }
+}
 
 // ── Display helpers ──────────────────────────────────────────────────────────
 

@@ -6,8 +6,12 @@ to produce a Buy/Hold/Sell recommendation.
 
 Usage:
     python main.py MSFT
-    python main.py NYSE:MSFT
+    python main.py TEVA.TA
+    python main.py TEVA --exchange TLV
     python main.py AAPL --period 1y
+    python main.py AAPL --llm
+    python main.py AAPL --llm --model claude-sonnet-4-5-20250929
+    python main.py --list-exchanges
 """
 
 import argparse
@@ -20,6 +24,7 @@ from technical_analysis import TechnicalAnalysis
 from fundamental_analysis import FundamentalAnalysis
 from news_analysis import NewsAnalysis
 from decision_engine import DecisionEngine
+from exchange_registry import resolve_ticker, list_exchanges
 
 colorama_init(autoreset=True)
 
@@ -65,23 +70,41 @@ def print_overall(signals: dict, label: str):
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
-def parse_ticker(raw: str) -> str:
-    """Strip exchange prefix like NYSE: or NASDAQ:."""
-    if ":" in raw:
-        return raw.split(":")[-1].strip().upper()
-    return raw.strip().upper()
-
-
 def main():
     parser = argparse.ArgumentParser(description="Stock Trading Decision System")
-    parser.add_argument("ticker", help="Stock ticker, e.g. MSFT or NYSE:MSFT")
+    parser.add_argument("ticker", nargs="?", help="Stock ticker, e.g. MSFT, TEVA.TA, or NYSE:MSFT")
+    parser.add_argument("--exchange", "-e", default=None,
+                        help="Exchange code, e.g. TLV, LSE, TSE (use --list-exchanges to see all)")
     parser.add_argument("--period", default="1y", help="History period (default: 1y)")
+    parser.add_argument("--list-exchanges", action="store_true",
+                        help="List all supported stock exchanges and exit")
+    parser.add_argument("--llm", action="store_true",
+                        help="Enable LLM analysis (Claude or OpenRouter)")
+    parser.add_argument("--model", default=None,
+                        help="LLM model ID (skip interactive selection), e.g. claude-sonnet-4-5-20250929")
     args = parser.parse_args()
 
-    symbol = parse_ticker(args.ticker)
+    if args.list_exchanges:
+        print(list_exchanges())
+        sys.exit(0)
+
+    if not args.ticker:
+        parser.error("ticker is required (unless using --list-exchanges)")
+
+    try:
+        ticker_info = resolve_ticker(args.ticker, args.exchange)
+    except ValueError as exc:
+        print(f"{Fore.RED}Error: {exc}{Style.RESET_ALL}")
+        sys.exit(1)
+
+    symbol = ticker_info.yahoo_symbol
+    base_ticker = ticker_info.base_ticker
+    exchange_label = f" ({ticker_info.exchange.name})" if ticker_info.exchange else ""
+    currency_sym = ticker_info.exchange.currency_symbol if ticker_info.exchange else "$"
+    currency_code = ticker_info.exchange.currency if ticker_info.exchange else "USD"
 
     print(f"\n{Fore.WHITE}{Style.BRIGHT}Stock Trading Decision System")
-    print(f"Analyzing: {Fore.YELLOW}{symbol}{Style.RESET_ALL}")
+    print(f"Analyzing: {Fore.YELLOW}{symbol}{exchange_label}{Style.RESET_ALL}")
     print(SEPARATOR)
 
     # ── Fetch data ────────────────────────────────────────────────────────
@@ -93,10 +116,15 @@ def main():
         print(f"{Fore.RED}Error: No data found for '{symbol}'. Check the ticker.{Style.RESET_ALL}")
         sys.exit(1)
 
+    # Use Yahoo Finance's reported currency as fallback
+    yf_currency = ticker.info.get("currency", "")
+    if yf_currency:
+        currency_code = yf_currency
+
     company_name = ticker.info.get("shortName", symbol)
     current_price = hist["Close"].iloc[-1]
     print(f"  Company : {company_name}")
-    print(f"  Price   : ${current_price:.2f}")
+    print(f"  Price   : {currency_sym}{current_price:.2f} {currency_code}")
     print(f"  Period  : {args.period} ({len(hist)} trading days)")
 
     # ── Technical Analysis ────────────────────────────────────────────────
@@ -112,7 +140,7 @@ def main():
 
     # ── Fundamental Analysis ──────────────────────────────────────────────
     print_header("FUNDAMENTAL ANALYSIS")
-    fa_engine = FundamentalAnalysis(ticker)
+    fa_engine = FundamentalAnalysis(ticker, currency_sym=currency_sym)
     fa_result = fa_engine.compute_all()
 
     print(f"\n{Fore.WHITE}  Metrics:{Style.RESET_ALL}")
@@ -123,7 +151,7 @@ def main():
 
     # ── News Sentiment ────────────────────────────────────────────────────
     print_header("NEWS SENTIMENT ANALYSIS")
-    news_engine = NewsAnalysis(symbol, company_name)
+    news_engine = NewsAnalysis(base_ticker, company_name)
     news_result = news_engine.compute_all()
 
     print(f"\n{Fore.WHITE}  Metrics:{Style.RESET_ALL}")
@@ -168,6 +196,35 @@ def main():
         print(f"    {line}")
 
     print(f"\n{Fore.YELLOW}  Disclaimer: This is for educational purposes only. Not financial advice.{Style.RESET_ALL}\n")
+
+    # ── LLM Analysis (optional) ──────────────────────────────────────────
+    if args.llm or args.model:
+        from llm_analysis import run_llm_analysis
+
+        print_header("LLM ANALYSIS")
+        print(f"\n{Fore.WHITE}  Querying LLM...{Style.RESET_ALL}")
+
+        try:
+            llm_result = run_llm_analysis(
+                ta_result=ta_result,
+                fa_result=fa_result,
+                news_result=news_result,
+                decision=decision,
+                symbol=symbol,
+                company_name=company_name,
+                currency_code=currency_code,
+                model=args.model,
+            )
+
+            print(f"\n  {Fore.CYAN}Model: {llm_result['model']} ({llm_result['provider']}){Style.RESET_ALL}")
+            print(f"{THIN_SEP}")
+            # Print LLM response with indentation
+            for line in llm_result["response"].split("\n"):
+                print(f"  {line}")
+            print(f"\n{THIN_SEP}")
+
+        except Exception as exc:
+            print(f"\n  {Fore.RED}LLM analysis failed: {exc}{Style.RESET_ALL}")
 
 
 if __name__ == "__main__":
